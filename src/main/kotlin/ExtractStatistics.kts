@@ -41,8 +41,6 @@ fun extractFromStatisticsCsv(inputFile: String, outputFilePrefix: String) {
         execId.split("-")[1]
     }
 
-    //println(recordsByConfiguration["fit_def_sec_def"]!!.subList(0, 10))
-
     recordsByConfiguration.keys.forEach { confId ->
         val printer = CSVFormat.DEFAULT.withHeader(
             "conf_id", "line_coverage", "branch_coverage", "exception_coverage", "weak_mutation_coverage",
@@ -93,24 +91,8 @@ fun extractCategories(inputFile: String, suiteFilePrefix: String, testCaseFilePr
             val testCasePrinter = CSVFormat.DEFAULT.print(FileWriter(testCaseFilePrefix + "_" + conf.key + ".csv"))
             conf.value.map { it.value.map { it.map { if (it[2].toInt() > 0) 1 else 0 }.average() } }
                 .forEach { it.forEachIndexed { index, d -> suitePrinter.printRecord(index + 1, d) } }
-                /*.fold(listOf<MutableList<Double>>(mutableListOf(), mutableListOf(), mutableListOf(), mutableListOf())) {
-                        sum, elem ->
-                    sum[0].add(elem[0])
-                    sum[1].add(elem[1])
-                    sum[2].add(elem[2])
-                    sum[3].add(elem[3])
-                    sum
-                }.map { it.average() }.forEachIndexed { index, d -> suitePrinter.printRecord(index + 1, d) }*/
             conf.value.map { execution -> execution.value.map { it.map { it[2].toInt() }.average() } }
                 .forEach { it.forEachIndexed { index, d -> testCasePrinter.printRecord(index + 1, d) } }
-                /*.fold(listOf<MutableList<Double>>(mutableListOf(), mutableListOf(), mutableListOf(), mutableListOf())) {
-                        sum, elem ->
-                    sum[0].add(elem[0])
-                    sum[1].add(elem[1])
-                    sum[2].add(elem[2])
-                    sum[3].add(elem[3])
-                    sum
-                }.map { it.average() }.forEachIndexed { index, d -> testCasePrinter.printRecord(index + 1, d) }*/
         }
 }
 
