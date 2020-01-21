@@ -1,2 +1,11 @@
 /.idea/
 /.gradle/
+.Rproj.user
+/build/
+/input/
+/output/
+/r-input/
+/r-output/
+.RData
+.Rhistory
+*.Rproj
