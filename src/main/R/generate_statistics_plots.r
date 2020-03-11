@@ -26,7 +26,10 @@ sizes_combined <- do.call('rbind', sizes)
 # Plot sizes
 library(ggplot2)
 sizes_plot <- ggplot(sizes_combined, aes(conf, suite_size))
-sizes_plot + geom_boxplot()
+sizes_plot2 <- sizes_plot + geom_boxplot()
+ylim1 = boxplot.stats(sizes_combined$suite_size)$stats[c(1,5)]
+
+sizes_plot2 + coord_cartesian(ylim = ylim1*1.05)
 
 # Plot generations (same as for size plot)
 generations <- c()

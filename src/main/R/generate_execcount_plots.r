@@ -37,4 +37,5 @@ case_counts_combined <- do.call('rbind', case_counts)
 # Plot test case counts
 library(ggplot2)
 case_counts_plot <- ggplot(case_counts_combined, aes(conf, V1))
-case_counts_plot + geom_boxplot()
+case_counts_plot + geom_boxplot() +
+  stat_summary(fun.y = mean, pch=22, size=3, geom="point")
