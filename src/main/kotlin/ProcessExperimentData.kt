@@ -50,7 +50,7 @@ fun main(args: Array<String>) {
     val suiteBranchCoverageCsv = CSVFormat.DEFAULT.parse(FileReader(branchCoverageInputFile)).records
     val testCaseLengthCsv = CSVFormat.DEFAULT.parse(FileReader(testCaseLengthsInputFile)).records
     val testCaseBranchCoverageCsv =
-        CSVFormat.DEFAULT.withFirstRecordAsHeader().parse(FileReader(testCaseBranchCoverageInputFile)).records
+        CSVFormat.DEFAULT.withFirstRecordAsHeader().parse(FileReader(testCaseBranchCoverageInputFile))
     println("Done")
 
     print("Parsing PIT reports...")
@@ -109,10 +109,12 @@ fun main(args: Array<String>) {
     println("Finished, exiting")
 }
 
-data class PitResult(val className: String, val coverageRatio: CoverageRatio)
+data class PitResult(val configurationID: String, val coverageRatio: CoverageRatio)
 
 data class CoverageRatio(val numCovered: Int, val total: Int) {
-    fun coverage() = numCovered.toDouble() / total
+    fun coverage(): Double? {
+        return numCovered.toDouble() / (if (total != 0) total else return null)
+    }
 }
 
 data class Branch(val firstLineNumber: Int, val lastLineNumber: Int)
@@ -124,7 +126,12 @@ fun parsePitResults(pitResultFolder: Path): Map<String, PitResult?> {
     configurations.forEach { configuration ->
         val configurationResultFolder = pitResultFolder.resolve(configuration)
         Files.newDirectoryStream(configurationResultFolder).use {
-            it.associateByTo(pitResults, { it.fileName.toString() }, {
+            it.associateByTo(pitResults, {
+                val splittedFileName = it.fileName.toString().split('-')
+                val className = splittedFileName[1]
+                val runID = splittedFileName[3]
+                "$className-$configuration-$runID"
+            }, {
                 val htmlFile = it.resolve("index.html")
                 if (Files.exists(htmlFile)) {
                     val splittedFileName = it.fileName.toString().split('-')
@@ -151,28 +158,29 @@ fun parsePitHtmlScore(pitHtmlResult: Path): CoverageRatio {
     return CoverageRatio(killedMutants, totalMutants)
 }
 
-fun outputPerSuiteData(statisticsCsv: List<CSVRecord>, pitResults: Map<String, PitResult?>, outputFile: Path) {
-    val printer = CSVFormat.DEFAULT.withHeader(
+fun outputPerSuiteData(statisticsCsv: Iterable<CSVRecord>, pitResults: Map<String, PitResult?>, outputFile: Path) {
+    CSVFormat.DEFAULT.withHeader(
         "class", "conf", "run-id", "line-coverage", "branch-coverage", "exception-coverage", "weak-mutation-score",
         "method-coverage", "input-coverage", "output-coverage", "suite-size", "num-generations", "pit-score"
-    ).print(Files.newBufferedWriter(outputFile))
+    ).print(Files.newBufferedWriter(outputFile)).use { printer ->
 
-    statisticsCsv.forEach {
-        val splittedConfigurationId = it["configuration_id"].split('-')
-        val className = splittedConfigurationId[0]
-        val configuration = splittedConfigurationId[1]
-        val runID = splittedConfigurationId[2]
+        statisticsCsv.forEach {
+            val splittedConfigurationId = it["configuration_id"].split('-')
+            val className = splittedConfigurationId[0]
+            val configuration = splittedConfigurationId[1]
+            val runID = splittedConfigurationId[2]
 
-        printer.printRecord(
-            className, configuration, runID, it["LineCoverage"], it["BranchCoverage"],
-            it["ExceptionCoverage"], it["WeakMutationScore"], it["MethodCoverage"], it["InputCoverage"],
-            it["OutputCoverage"], it["Size"], it["Generations"],
-            pitResults[it["configuration_id"]]?.coverageRatio?.coverage() ?: -1
-        )
+            printer.printRecord(
+                className, configuration, runID, it["LineCoverage"], it["BranchCoverage"],
+                it["ExceptionCoverage"], it["WeakMutationScore"], it["MethodCoverage"], it["InputCoverage"],
+                it["OutputCoverage"], it["Size"], it["Generations"],
+                pitResults[it["configuration_id"]]?.coverageRatio?.coverage() ?: -1
+            )
+        }
     }
 }
 
-fun extractBranchExecWeight(suiteBranchCoverageCsv: List<CSVRecord>): Map<String, Map<Branch, Int>> =
+fun extractBranchExecWeight(suiteBranchCoverageCsv: Iterable<CSVRecord>): Map<String, Map<Branch, Int>> =
     suiteBranchCoverageCsv.groupBy {
         it[0].split('-')[0] // Group by class name
     }.mapValues {
@@ -185,10 +193,10 @@ fun extractBranchExecWeight(suiteBranchCoverageCsv: List<CSVRecord>): Map<String
             }
     }
 
-fun parseTestCaseLengths(testCaseLengthCsv: List<CSVRecord>): Map<String, Int> =
+fun parseTestCaseLengths(testCaseLengthCsv: Iterable<CSVRecord>): Map<String, Int> =
     testCaseLengthCsv.associate { Pair(it[0], it[1].toInt()) }
 
-fun parseTestCaseCoveredBranches(testCaseBranchCoverageCsv: List<CSVRecord>): Map<String, Set<Branch>> =
+fun parseTestCaseCoveredBranches(testCaseBranchCoverageCsv: Iterable<CSVRecord>): Map<String, Set<Branch>> =
     testCaseBranchCoverageCsv.filter { it[2] == "true" }.groupBy(
         { it["conf-id"] },
         {
@@ -200,43 +208,45 @@ fun parseTestCaseCoveredBranches(testCaseBranchCoverageCsv: List<CSVRecord>): Ma
 fun computeExecWeightCoverage(
     testCaseCoveredBranches: Map<String, Set<Branch>>,
     branchExecWeights: Map<String, Map<Branch, Int>>
-): Map<String, Double> =
+): Map<String, Double?> =
     testCaseCoveredBranches.mapValues { (confID, coveredBranches) ->
         val className = confID.split('-')[0]
         computeExecWeightCoverage(
             coveredBranches, branchExecWeights[className]
                 ?: error(
-                    "This map" +
-                            "should contain values for every class"
+                    "This map should contain values for every class"
                 )
         )
     }
 
-fun computeExecWeightCoverage(coveredBranches: Set<Branch>, branchExecWeights: Map<Branch, Int>): Double {
-    val highestExecWeight = branchExecWeights.values.max() ?: 0
-    val lowestExecWeight = branchExecWeights.values.filter { it > 0 }.min() ?: 0
+fun computeExecWeightCoverage(coveredBranches: Set<Branch>, branchExecWeights: Map<Branch, Int>): Double? {
+    val highestExecWeight = branchExecWeights.values.filter { it > 0 }.max() ?: return null
+    val lowestExecWeight = branchExecWeights.values.filter { it in 1 until highestExecWeight }.min() ?: return null
 
-    return coveredBranches.map {
-        ((branchExecWeights[it] ?: error("This map should contain values for every branch"))
-                - lowestExecWeight) /
-                (highestExecWeight - lowestExecWeight).toDouble()
-    }.average()
+    return coveredBranches
+        .filter { branchExecWeights[it] ?: error("This map should contain values for every branch") > 0 }
+        .map {
+            ((branchExecWeights[it] ?: error("See preceding filter"))
+                    - lowestExecWeight) /
+                    (highestExecWeight - lowestExecWeight).toDouble()
+        }.average().takeIf { it.isFinite() }
 }
 
 fun outputPerTestCaseData(
-    testCaseExecWeightCoverage: Map<String, Double>, testCaseLengths: Map<String, Int>,
+    testCaseExecWeightCoverage: Map<String, Double?>, testCaseLengths: Map<String, Int>,
     outputFile: Path
 ) {
-    val printer = CSVFormat.DEFAULT.withHeader(
+    CSVFormat.DEFAULT.withHeader(
         "class", "conf", "run-id", "tc-id", "exec-weight-cov", "length"
-    ).print(Files.newBufferedWriter(outputFile))
+    ).print(Files.newBufferedWriter(outputFile)).use { printer ->
 
-    testCaseExecWeightCoverage.forEach {
-        val splittedTcId = it.key.split('-')
-        printer.printRecord(
-            splittedTcId[0], splittedTcId[1], splittedTcId[2], splittedTcId[3], it.value,
-            testCaseLengths[it.key]
-        )
+        testCaseExecWeightCoverage.forEach {
+            val splittedTcId = it.key.split('-')
+            printer.printRecord(
+                splittedTcId[0], splittedTcId[1], splittedTcId[2], splittedTcId[3], it.value ?: -1.0,
+                testCaseLengths[it.key]
+            )
+        }
     }
 }
 
@@ -263,13 +273,25 @@ fun parseEsLogFile(logFile: Path): List<FitnessFunctionValueSnapshot> {
         val fitnessValueRegex =
             Regex("""(?:\[(?:.+)] Best so far \((\d+)\): class \w+(?:\.\w+)+?\.(\w+) \*\* (\d\.\d+))""")
         val execWeightRegex = Regex("""(?:\[(?:.+)] Best so far \((\d+)\): AvgExecCountRatio \*\* (\d\.\d+))""")
+        var currentBestIndividualIteration = 0
+        val currentFfSnapshots = mutableListOf<FitnessFunctionValueSnapshot>()
         while (scanner.hasNextLine()) {
             val currentLine = scanner.nextLine() ?: error("Just checked if there is a next line")
             val currentLineMatch = fitnessValueRegex.find(currentLine)
+
+            fun checkIterationEnd(thisIteration: Int) {
+                if (thisIteration > currentBestIndividualIteration) {
+                    ffSnapshots.addAll(currentFfSnapshots)
+                    currentFfSnapshots.clear()
+                    currentBestIndividualIteration = thisIteration
+                }
+            }
+
             if (currentLineMatch != null) {
+                checkIterationEnd(currentLineMatch.groupValues[1].toInt())
                 val lineTime = extractEsLogLineTime(currentLine)
                 val runtime = Duration.between(startTime, lineTime).toMillis()
-                ffSnapshots.add(
+                currentFfSnapshots.add(
                     FitnessFunctionValueSnapshot(
                         runtime, currentLineMatch.groupValues[2],
                         currentLineMatch.groupValues[3].toDouble()
@@ -278,9 +300,10 @@ fun parseEsLogFile(logFile: Path): List<FitnessFunctionValueSnapshot> {
             } else {
                 val execWeightMatch = execWeightRegex.find(currentLine)
                 if (execWeightMatch != null) {
+                    checkIterationEnd(execWeightMatch.groupValues[1].toInt())
                     val lineTime = extractEsLogLineTime(currentLine)
                     val runtime = Duration.between(startTime, lineTime).toMillis()
-                    ffSnapshots.add(
+                    currentFfSnapshots.add(
                         FitnessFunctionValueSnapshot(
                             runtime, "ExecWeightSuiteFitness",
                             execWeightMatch.groupValues[2].toDouble()
@@ -303,15 +326,13 @@ fun extractEsLogLineTime(logLine: String): LocalDateTime {
 }
 
 fun outputIntermediateFitnessValueData(ffValues: Map<String, List<FitnessFunctionValueSnapshot>>, outputFile: Path) {
-    val printer = CSVFormat.DEFAULT.withHeader(
+    CSVFormat.DEFAULT.withHeader(
         "class-name", "configuration", "run-id", "runtime", "ff-name", "ff-value"
-    ).print(Files.newBufferedWriter(outputFile))
-
-    printer.use { innerPrinter ->
+    ).print(Files.newBufferedWriter(outputFile)).use { printer ->
         ffValues.forEach { (configurationID, ffValueList) ->
             val splittedConfigurationID = configurationID.split('-')
             ffValueList.forEach {
-                innerPrinter.printRecord(
+                printer.printRecord(
                     splittedConfigurationID[0], splittedConfigurationID[1], splittedConfigurationID[2],
                     it.esRuntime, it.ffName, it.ffValue
                 )
@@ -320,30 +341,30 @@ fun outputIntermediateFitnessValueData(ffValues: Map<String, List<FitnessFunctio
     }
 }
 
-fun computePerClassAndConfAvgExecWeight(execWeightCov: Map<String, Double>): Map<String, Map<String, Double>> =
+fun computePerClassAndConfAvgExecWeight(execWeightCov: Map<String, Double?>): Map<String, Map<String, Double?>> =
     execWeightCov.entries.groupBy { it.key.split('-')[0] }
         .mapValues {
-            it.value.groupBy(
+            it.value.filter { it.value != null }.groupBy(
                 { it.key.split('-')[1] },
-                { it.value }
-            ).mapValues { it.value.average() }
+                { it.value ?: error("Just filtered for not null") }
+            ).mapValues { it.value.average().takeIf { it.isFinite() } }
         }
 
 fun computeConfExecWeightDiffRatios(
-    classAndConfAvgExecWeight: Map<String, Map<String, Double>>,
+    classAndConfAvgExecWeight: Map<String, Map<String, Double?>>,
     baseConf: String, compareConf: String
-): Map<String, Double> =
+): Map<String, Double?> =
     classAndConfAvgExecWeight
         .filter { it.value.containsKey(compareConf) && it.value.containsKey(baseConf) }
         .entries.associateBy({ it.key },
         {
-            (it.value[compareConf] ?: error("Just checked containsKey()")) /
-                    (it.value[baseConf] ?: error("Just checked containsKey()"))
+            (it.value[baseConf])?.let { it1 -> (it.value[compareConf])?.div(it1) }
         })
 
-fun outputExecWeightDiffRatios(ratios: Map<String, Double>, outputFile: Path) {
-    val printer = CSVFormat.DEFAULT.withHeader(
+fun outputExecWeightDiffRatios(ratios: Map<String, Double?>, outputFile: Path) {
+    CSVFormat.DEFAULT.withHeader(
         "class-name", "ratio"
-    ).print(Files.newBufferedWriter(outputFile))
-    ratios.forEach { (className, ratio) -> printer.printRecord(className, ratio) }
+    ).print(Files.newBufferedWriter(outputFile)).use { printer ->
+        ratios.forEach { (className, ratio) -> printer.printRecord(className, ratio ?: -1.0) }
+    }
 }
