@@ -77,6 +77,10 @@ fun main(args: Array<String>) {
     val intermediateFitnessValues = extractIntermediateFitnessValues(Path.of(esLogFolder))
     println("Done")
 
+    print("Interpolating intermediate fitness values...")
+    val interpolatedFitnessValues = interpolateIntermediateFitnessValues(intermediateFitnessValues)
+    println("Done")
+
     print("Computing average execution weight per class and configuration...")
     val perClassAndConfAvgExecWeight = computePerClassAndConfAvgExecWeight(tcExecWeightCoverage)
     println("Done")
@@ -97,7 +101,10 @@ fun main(args: Array<String>) {
     print("Writing data to disk...")
     outputPerSuiteData(statisticsCsv, pitResults, Path.of(suiteOutputFile))
     outputPerTestCaseData(tcExecWeightCoverage, testCaseLengths, Path.of(testCaseOutputFile))
-    outputIntermediateFitnessValueData(intermediateFitnessValues, Path.of(intermediateDataOutputFile))
+    outputIntermediateFitnessValueData(
+        interpolatedFitnessValues,
+        Path.of(intermediateDataOutputFile)
+    )
     outputExecWeightDiffRatios(defToMaxMaxRatios, Path.of("$ratiosOutputPrefix-def-to-max-max.csv"))
     outputExecWeightDiffRatios(defToMinMinRatios, Path.of("$ratiosOutputPrefix-def-to-min-min.csv"))
     outputExecWeightDiffRatios(defToDefMaxRatios, Path.of("$ratiosOutputPrefix-def-to-def-max.csv"))
@@ -250,48 +257,100 @@ fun outputPerTestCaseData(
     }
 }
 
-fun extractIntermediateFitnessValues(esLogFolder: Path): Map<String, List<FitnessFunctionValueSnapshot>> =
+fun extractIntermediateFitnessValues(esLogFolder: Path): Map<String, Map<String, Map<String, List<FitnessFunctionValueSnapshot>>>> =
     configurations.map { configuration ->
-        val configurationLogFolder = esLogFolder.resolve(configuration)
-        Files.newDirectoryStream(configurationLogFolder).use {
-            it.filter { it.fileName.toString().endsWith("-out.txt") }.associateBy({
-                val splittedFileName = it.fileName.toString().split('-')
-                "${splittedFileName[1]}-$configuration-${splittedFileName[2]}"
-            },
-                { parseEsLogFile(it) })
+            val configurationLogFolder = esLogFolder.resolve(configuration)
+            Files.newDirectoryStream(configurationLogFolder).use {
+                it.filter { it.fileName.toString().endsWith("-out.txt") }.associateBy({
+                    val splittedFileName = it.fileName.toString().split('-')
+                    "${splittedFileName[1]}-$configuration-${splittedFileName[2]}"
+                },
+                    { parseEsLogFile(it) })
+            }
+        }.fold(mutableMapOf<String, List<FitnessFunctionValueSnapshot>>(), { merged, confMap ->
+            merged.putAll(confMap)
+            merged
+        }).entries.flatMap { mapEntry -> mapEntry.value.map { Pair(mapEntry.key, it) } }
+        .groupBy { it.first.split('-')[1] }.mapValues {
+            it.value.groupBy { it.second.ffName }
+                .mapValues { it.value.groupBy({ it.first }, { it.second }) }
         }
-    }.fold(mutableMapOf(), { merged, confMap ->
-        merged.putAll(confMap)
-        merged
-    })
+
+fun interpolateIntermediateFitnessValues(extractedValues: Map<String, Map<String, Map<String, List<FitnessFunctionValueSnapshot>>>>): Map<String, List<FitnessFunctionValueSnapshot>> =
+    extractedValues.mapValues {
+        it.value.mapValues {
+            val endTime = lastFfSnapshotTime(it.value)
+            it.value.mapValues {
+                interpolateIntermediateFitnessValues(it.value, endTime, 5_000)
+            }
+        }
+    }.values.fold(emptySequence<Map.Entry<String, List<FitnessFunctionValueSnapshot>>>(), { totalSequence, ffMap ->
+        totalSequence + ffMap.values.fold(
+            emptySequence(),
+            { innerTotalSequence, confIdMap ->
+                innerTotalSequence + confIdMap.asSequence()
+            })
+    }).groupBy({ it.key }, { it.value }).mapValues {
+        it.value.fold(
+            mutableListOf(),
+            { combinedList, subList -> combinedList.addAll(subList); combinedList })
+    }
+
+fun lastFfSnapshotTime(snapshots: Map<String, List<FitnessFunctionValueSnapshot>>): Long =
+    snapshots.values.fold(mutableListOf<FitnessFunctionValueSnapshot>(), { totalList, snapshotList ->
+        totalList.addAll(snapshotList)
+        totalList
+    }).map { it.esRuntime }.max() ?: 0
+
+fun interpolateIntermediateFitnessValues(
+    values: List<FitnessFunctionValueSnapshot>,
+    endTime: Long,
+    interval: Long
+): List<FitnessFunctionValueSnapshot> {
+    val resultList = mutableListOf<FitnessFunctionValueSnapshot>()
+    var currentFFValue = 0.toDouble()
+    var nextStartTime = 0.toLong()
+    for (snapshot in values) {
+        for (time in nextStartTime until snapshot.esRuntime step interval) {
+            resultList.add(FitnessFunctionValueSnapshot(time, snapshot.ffName, currentFFValue))
+            nextStartTime = time + interval
+        }
+        currentFFValue = snapshot.ffValue
+    }
+    for (time in nextStartTime..(endTime + interval) step interval)
+        resultList.add(FitnessFunctionValueSnapshot(time, values[0].ffName, currentFFValue))
+
+    return resultList
+}
 
 fun parseEsLogFile(logFile: Path): List<FitnessFunctionValueSnapshot> {
     val ffSnapshots = mutableListOf<FitnessFunctionValueSnapshot>()
     Scanner(Files.newBufferedReader(logFile)).use { scanner ->
-        if (!scanner.hasNextLine()) return listOf()
-        val startTime = extractEsLogLineTime(scanner.nextLine())
+        val startSearchRegex = Regex("""\[.+] \* Starting evolution""")
+        var startTime: LocalDateTime? = null
+        while (scanner.hasNextLine()) {
+            val currentLine = scanner.nextLine()
+            if (startSearchRegex.find(currentLine) != null) {
+                startTime = extractEsLogLineTime(currentLine)
+                break
+            }
+        }
+
         val fitnessValueRegex =
             Regex("""(?:\[(?:.+)] Best so far \((\d+)\): class \w+(?:\.\w+)+?\.(\w+) \*\* (\d\.\d+))""")
         val execWeightRegex = Regex("""(?:\[(?:.+)] Best so far \((\d+)\): AvgExecCountRatio \*\* (\d\.\d+))""")
-        var currentBestIndividualIteration = 0
-        val currentFfSnapshots = mutableListOf<FitnessFunctionValueSnapshot>()
+        val startMinimizationRegex = Regex("""\[.+] \* Minimizing test suite""")
         while (scanner.hasNextLine()) {
             val currentLine = scanner.nextLine() ?: error("Just checked if there is a next line")
-            val currentLineMatch = fitnessValueRegex.find(currentLine)
-
-            fun checkIterationEnd(thisIteration: Int) {
-                if (thisIteration > currentBestIndividualIteration) {
-                    ffSnapshots.addAll(currentFfSnapshots)
-                    currentFfSnapshots.clear()
-                    currentBestIndividualIteration = thisIteration
-                }
+            if (startMinimizationRegex.find(currentLine) != null) {
+                break
             }
 
+            val currentLineMatch = fitnessValueRegex.find(currentLine)
             if (currentLineMatch != null) {
-                checkIterationEnd(currentLineMatch.groupValues[1].toInt())
                 val lineTime = extractEsLogLineTime(currentLine)
                 val runtime = Duration.between(startTime, lineTime).toMillis()
-                currentFfSnapshots.add(
+                ffSnapshots.add(
                     FitnessFunctionValueSnapshot(
                         runtime, currentLineMatch.groupValues[2],
                         currentLineMatch.groupValues[3].toDouble()
@@ -300,10 +359,9 @@ fun parseEsLogFile(logFile: Path): List<FitnessFunctionValueSnapshot> {
             } else {
                 val execWeightMatch = execWeightRegex.find(currentLine)
                 if (execWeightMatch != null) {
-                    checkIterationEnd(execWeightMatch.groupValues[1].toInt())
                     val lineTime = extractEsLogLineTime(currentLine)
                     val runtime = Duration.between(startTime, lineTime).toMillis()
-                    currentFfSnapshots.add(
+                    ffSnapshots.add(
                         FitnessFunctionValueSnapshot(
                             runtime, "ExecWeightSuiteFitness",
                             execWeightMatch.groupValues[2].toDouble()
