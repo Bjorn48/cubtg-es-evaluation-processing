@@ -71,6 +71,8 @@ fun main(args: Array<String>) {
     val testCaseLengths = parseTestCaseLengths(testCaseLengthCsv)
     println("Done")
 
+
+
     print("Parsing branches covered by test cases...")
     val tcCoveredBranches = parseTestCaseCoveredBranches(testCaseBranchCoverageCsv)
     println("Done")
@@ -104,6 +106,14 @@ fun main(args: Array<String>) {
         computeConfExecWeightDiffRatios(perClassAndConfAvgExecWeight, "fit_def_sec_def", "fit_max_min_sec_def")
     println("Done")
 
+    print("Computing average PIT score per class and configuration...")
+    val perClassAndConfAvgPitScore = computePerClassAndConfAveragePitScore(pitResults)
+    println("Done")
+
+    print("Compute average PIT score difference ratios between configurations...")
+    val pitDefToDefMaxRatios = computeConfExecWeightDiffRatios(perClassAndConfAvgPitScore, "fit_def_sec_def", "fit_def_sec_max")
+    println("Done")
+
     print("Writing data to disk...")
     outputPerSuiteData(statisticsCsv, pitResults, Path.of(suiteOutputFile))
     outputPerTestCaseData(tcExecWeightCoverage, testCaseLengths, Path.of(testCaseOutputFile))
@@ -116,7 +126,7 @@ fun main(args: Array<String>) {
     outputExecWeightDiffRatios(defToDefMaxRatios, Path.of("$ratiosOutputPrefix-def-to-def-max.csv"))
     outputExecWeightDiffRatios(defToDefMinRatios, Path.of("$ratiosOutputPrefix-def-to-def-min.csv"))
     outputExecWeightDiffRatios(defToMaxMinDefRatios, Path.of("$ratiosOutputPrefix-def-to-max-min-def.csv"))
-    outputExecutionWeightRatioToPitScore(defToDefMaxRatios, classMaxExecWeights, Path.of(execWeightToPitScoreOutputFile))
+    outputMaxExecutionWeightToPitScoreRatio(pitDefToDefMaxRatios, classMaxExecWeights, Path.of(execWeightToPitScoreOutputFile))
     println("Done")
 
     println()
@@ -130,6 +140,9 @@ data class CoverageRatio(val numCovered: Int, val total: Int) {
         return numCovered.toDouble() / (if (total != 0) total else return null)
     }
 }
+
+fun Collection<CoverageRatio>.average(): Double = this.map { it.coverage() }.filter { it != null }
+    .map { it!! }.average()
 
 data class Branch(val firstLineNumber: Int, val lastLineNumber: Int)
 
@@ -171,6 +184,15 @@ fun parsePitHtmlScore(pitHtmlResult: Path): CoverageRatio {
 
     return CoverageRatio(killedMutants, totalMutants)
 }
+
+fun computePerClassAndConfAveragePitScore(pitResults: Map<String, PitResult?>): Map<String, Map<String, Double?>> =
+    pitResults.entries.groupBy { it.key.split('-')[0] }
+        .mapValues {
+            it.value.filter { it.value != null }.groupBy(
+                { it.key.split('-')[1] },
+                { it.value ?: error("Just filtered for not null") }
+            ).mapValues { it.value.map { it.coverageRatio }.average().takeIf { it.isFinite() } }
+        }
 
 fun outputPerSuiteData(statisticsCsv: Iterable<CSVRecord>, pitResults: Map<String, PitResult?>, outputFile: Path) {
     CSVFormat.DEFAULT.withHeader(
@@ -438,11 +460,11 @@ fun outputExecWeightDiffRatios(ratios: Map<String, Double?>, outputFile: Path) {
     }
 }
 
-fun outputExecutionWeightRatioToPitScore(ratios: Map<String, Double?>, classMaxExecWeights: Map<String, Int>,
-                                         outputFile: Path)  {
+fun outputMaxExecutionWeightToPitScoreRatio(pitRatios: Map<String, Double?>, classMaxExecWeights: Map<String, Int>,
+                                            outputFile: Path)  {
     CSVFormat.DEFAULT.withHeader(
         "class-name", "max-weight", "ratio"
     ).print(Files.newBufferedWriter(outputFile)).use { printer ->
-        ratios.forEach { (className, ratio) -> printer.printRecord(className, ratio ?: -1.0, classMaxExecWeights[className] ?: -1) }
+        pitRatios.forEach { (className, ratio) -> printer.printRecord(className, ratio ?: -1.0, classMaxExecWeights[className] ?: -1) }
     }
 }
