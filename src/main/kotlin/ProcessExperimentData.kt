@@ -23,6 +23,7 @@ fun main(args: Array<String>) {
     val testCaseOutputFile = args[7]
     val intermediateDataOutputFile = args[8]
     val ratiosOutputPrefix = args[9]
+    val execWeightToPitScoreOutputFile = args[10]
 
     println("===EvoSuite + PIT output data processor===")
     println(
@@ -42,6 +43,7 @@ fun main(args: Array<String>) {
     *   Per test case data: $testCaseOutputFile
     *   Intermediate fitness value data: $intermediateDataOutputFile
     *   Ratios between configurations (prefix): $ratiosOutputPrefix
+    *   Execution weight ratio to PIT score: $execWeightToPitScoreOutputFile
 """.trimIndent()
     )
 
@@ -59,6 +61,10 @@ fun main(args: Array<String>) {
 
     print("Extracting branch execution weights...")
     val branchExecWeights = extractBranchExecWeight(suiteBranchCoverageCsv)
+    println("Done")
+
+    print("Computing class maximum execution weights...")
+    val classMaxExecWeights = computeClassMaxExecWeight(branchExecWeights)
     println("Done")
 
     print("Parsing test case lengths...")
@@ -110,6 +116,7 @@ fun main(args: Array<String>) {
     outputExecWeightDiffRatios(defToDefMaxRatios, Path.of("$ratiosOutputPrefix-def-to-def-max.csv"))
     outputExecWeightDiffRatios(defToDefMinRatios, Path.of("$ratiosOutputPrefix-def-to-def-min.csv"))
     outputExecWeightDiffRatios(defToMaxMinDefRatios, Path.of("$ratiosOutputPrefix-def-to-max-min-def.csv"))
+    outputExecutionWeightRatioToPitScore(defToDefMaxRatios, classMaxExecWeights, Path.of(execWeightToPitScoreOutputFile))
     println("Done")
 
     println()
@@ -199,6 +206,10 @@ fun extractBranchExecWeight(suiteBranchCoverageCsv: Iterable<CSVRecord>): Map<St
                 Branch(splittedKey[0].toInt(), splittedKey[1].toInt()) // Change key to Branch object
             }
     }
+
+fun computeClassMaxExecWeight(branchExecWeights: Map<String, Map<Branch, Int>>): Map<String, Int> =
+    branchExecWeights.mapValues { it.value.values.max() ?: 0 }
+
 
 fun parseTestCaseLengths(testCaseLengthCsv: Iterable<CSVRecord>): Map<String, Int> =
     testCaseLengthCsv.associate { Pair(it[0], it[1].toInt()) }
@@ -424,5 +435,14 @@ fun outputExecWeightDiffRatios(ratios: Map<String, Double?>, outputFile: Path) {
         "class-name", "ratio"
     ).print(Files.newBufferedWriter(outputFile)).use { printer ->
         ratios.forEach { (className, ratio) -> printer.printRecord(className, ratio ?: -1.0) }
+    }
+}
+
+fun outputExecutionWeightRatioToPitScore(ratios: Map<String, Double?>, classMaxExecWeights: Map<String, Int>,
+                                         outputFile: Path)  {
+    CSVFormat.DEFAULT.withHeader(
+        "class-name", "max-weight", "ratio"
+    ).print(Files.newBufferedWriter(outputFile)).use { printer ->
+        ratios.forEach { (className, ratio) -> printer.printRecord(className, ratio ?: -1.0, classMaxExecWeights[className] ?: -1) }
     }
 }
