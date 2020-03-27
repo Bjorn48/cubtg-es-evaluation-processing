@@ -1,3 +1,5 @@
+**Note: this README is outdated**
+
 # EvoSuite (un)common behavior test generation evaluation data processing
 This repository contains scripts for processing the output data from the EvoSuite (un)common behavior test generation
 evaluation experiment. The code for executing the experiment can be found in
