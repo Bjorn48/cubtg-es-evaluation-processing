@@ -2,6 +2,7 @@ library(tidyverse)
 library(effsize)
 
 computeMetrics <- function(stats, outFolder) {
+  stats <- stats %>% filter(val >= 0.0)
   perConfSummary <- stats %>% group_by(conf) %>% group_modify(function(rows, key) {
     summ <- summary(rows$val)
     result <- as_tibble(as.list(summ))
