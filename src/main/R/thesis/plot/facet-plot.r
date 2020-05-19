@@ -1,5 +1,6 @@
 library(tidyverse)
 library(effsize)
+source("src/main/R/thesis/plot/saveThesisPlot.r")
 
 confNames <- c()
 confNames[1] <- "fit_def_sec_def"
@@ -20,6 +21,10 @@ confDispNames[5] <- "f_max_s_max"
 confDispNames[6] <- "f_min_s_min"
 confDispNames[7] <- "nsgaii_max"
 confDispNames[8] <- "nsgaii_min"
+
+outFolder <- "r-output/plots/"
+outWidth <- 297
+outHeight <- 210
 
 computeMetrics <- function(stats, conf1, conf2) {
   compareConf <- function (statsPerClass, conf1, conf2) {
@@ -70,7 +75,7 @@ computePlotData <- function(stats) {
   return(plotData)
 }
 
-plotConfCompare <- function(plotData) {
+plotConfCompare <- function(plotData, plotTitle) {
   numObservations <- function(inputData) {
     return(tibble(y=0.95, label = str_c("n = ",length(inputData))))
   }
@@ -83,19 +88,52 @@ plotConfCompare <- function(plotData) {
     scale_x_discrete(expand = expand_scale(add=0.5), breaks = NULL) +
     labs(x = "", y = "Effect size") +
     stat_summary(fun.data = numObservations, geom = "label", size = 3,
-                 position = position_nudge(x = 0.35))
+                 position = position_nudge(x = 0.35)) +
+    labs(title = plotTitle)
 }
 
 infileTcStats <- 'r-input/data/tc-data.csv'
 tcStats <- read_csv(infileTcStats) %>% rename_all(make.names)
 commonalityStats <- tcStats[,c("class", "conf", "run.id", "exec.weight.cov")] %>% rename(val = exec.weight.cov)
-
 commonalityPlotData <- computePlotData(commonalityStats)
-plotConfCompare(commonalityPlotData)
+plotConfCompare(commonalityPlotData,
+                "Commonality score per test case, difference in effect size across configurations")
+saveThesisPlot(str_c(outFolder, "facet-commonality.pdf"),
+               plotWidth = outWidth, plotHeight = outHeight)
+
+tcLengthStats <- tcStats[,c("class", "conf", "run.id", "length")] %>% rename(val = length)
+tcLengthPlotData <- computePlotData(tcLengthStats)
+plotConfCompare(tcLengthPlotData,
+                "Test case length, difference in effect size across configurations")
+saveThesisPlot(str_c(outFolder, "facet-tc-length.pdf"),
+               plotWidth = outWidth, plotHeight = outHeight)
 
 infileSuiteStats <- 'r-input/data/suite-data.csv'
 suiteStats <- read_csv(infileSuiteStats) %>% rename_all(make.names)
 pitStats <- suiteStats[,c("class", "conf", "run.id", "pit.score")] %>% rename(val = pit.score)
-
 pitPlotData <- computePlotData(pitStats)
-plotConfCompare(pitPlotData)
+plotConfCompare(pitPlotData,
+                "PIT score per test suite, difference in effect size across configurations")
+saveThesisPlot(str_c(outFolder, "facet-pit.pdf"),
+               plotWidth = outWidth, plotHeight = outHeight)
+
+branchStats <- suiteStats[,c("class", "conf", "run.id", "branch.coverage")] %>% rename(val = branch.coverage)
+branchPlotData <- computePlotData(branchStats)
+plotConfCompare(branchPlotData,
+                "Branch coverage per test suite, difference in effect size across configurations")
+saveThesisPlot(str_c(outFolder, "facet-branch.pdf"),
+               plotWidth = outWidth, plotHeight = outHeight)
+
+suiteSizeStats <- suiteStats[,c("class", "conf", "run.id", "suite.size")] %>% rename(val = suite.size)
+suiteSizePlotData <- computePlotData(suiteSizeStats)
+plotConfCompare(suiteSizePlotData,
+                "Test suite size, difference in effect size across configurations")
+saveThesisPlot(str_c(outFolder, "facet-suite-size.pdf"),
+               plotWidth = outWidth, plotHeight = outHeight)
+
+numGensStats <- suiteStats[,c("class", "conf", "run.id", "num.generations")] %>% rename(val = num.generations)
+numGensPlotData <- computePlotData(numGensStats)
+plotConfCompare(numGensPlotData,
+                "Number of EvoSuite generations, difference in effect size across configurations")
+saveThesisPlot(str_c(outFolder, "facet-num-generations.pdf"),
+               plotWidth = outWidth, plotHeight = outHeight)
