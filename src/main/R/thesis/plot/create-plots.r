@@ -51,7 +51,7 @@ saveThesisPlot("r-output/plots/pit-per-configuration.pdf", scale = 2)
 thesisBoxplot(suiteData, "branch.coverage", "Test suite branch coverage, per configuration")
 saveThesisPlot("r-output/plots/branch-cov-per-configuration.pdf", scale = 2)
 
-thesisBoxplot(suiteData, "num.generations", "Test suite #search generations, per configuration", ylabel = "#Generations", ymax = 600, outlierShape = NA)
+thesisBoxplot(suiteData, "num.generations", "Test suite #search generations, per configuration", ylabel = "#Generations", ymax = 780, outlierShape = NA)
 saveThesisPlot("r-output/plots/generations-per-configuration.pdf", scale = 2)
 
 thesisBoxplot(suiteData, "suite.size", "Test suite size, per configuration", ylabel = "Size", ymax = 80, outlierShape = NA)

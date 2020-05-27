@@ -8,7 +8,7 @@ thesisBoxplot <- function(stats, colName, plotTitle, ylabel = "Coverage value", 
     plot <- plot + scale_y_log10()
   }
   if (!is.null(ymax)) {
-    plot <- plot + ylim(NA, ymax)
+    plot <- plot + coord_cartesian(ylim = c(0, ymax))
   }
   print(plot)
 }
