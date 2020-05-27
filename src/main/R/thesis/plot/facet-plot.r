@@ -89,7 +89,8 @@ plotConfCompare <- function(plotData, plotTitle) {
     labs(x = "", y = "Effect size") +
     stat_summary(fun.data = numObservations, geom = "label", size = 3,
                  position = position_nudge(x = 0.35)) +
-    labs(title = plotTitle)
+    labs(title = plotTitle) +
+    theme(strip.text.y = element_text(size = 6))
 }
 
 infileTcStats <- 'r-input/data/tc-data.csv'
